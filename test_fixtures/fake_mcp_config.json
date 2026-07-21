@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/harsha"],
+      "env": {}
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_THIS_IS_FAKE_donotuse" }
+    },
+    "notes": {
+      "command": "npx",
+      "args": ["-y", "some-notes-server", "./docs"],
+      "env": {}
+    }
+  }
+}
