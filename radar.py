@@ -12,31 +12,71 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry import metrics
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+import logging
 
 # One "machine identity" for this scan. Later we can rotate this to simulate
 # multiple employees; for now it's this Mac.
 MACHINE_ID = "harsha-mbp"
 
 def setup_telemetry():
-    """Configure the pipeline that ships detections to local SigNoz."""
+    """Configure traces, logs, and metrics — all shipping to local SigNoz."""
     resource = Resource.create({"service.name": "shadow-ai-radar"})
-    provider = TracerProvider(resource=resource)
-    provider.add_span_processor(
+
+    # --- Traces (as before) ---
+    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider.add_span_processor(
         BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces"))
     )
-    trace.set_tracer_provider(provider)
-    return provider
-def report_to_signoz(detections, provider):
-    """Send each detection to SigNoz as a span inside one scan trace."""
-    tracer = trace.get_tracer("shadow-ai-radar")
+    trace.set_tracer_provider(tracer_provider)
 
-    # one parent span = the whole scan cycle
+    # --- Logs ---
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(
+        BatchLogRecordProcessor(OTLPLogExporter(endpoint="http://localhost:4318/v1/logs"))
+    )
+    set_logger_provider(logger_provider)
+    # bridge Python's logging module to OTel so log lines get shipped
+    handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+    otel_logger = logging.getLogger("shadow-ai-radar")
+    otel_logger.setLevel(logging.INFO)
+    otel_logger.addHandler(handler)
+
+    # --- Metrics ---
+    metric_reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
+    )
+    meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+    metrics.set_meter_provider(meter_provider)
+
+    return tracer_provider, logger_provider, meter_provider, otel_logger
+
+def report_to_signoz(detections, providers):
+    """Send detections to SigNoz as spans + logs + metrics."""
+    tracer_provider, logger_provider, meter_provider, log = providers
+    tracer = trace.get_tracer("shadow-ai-radar")
+    meter = metrics.get_meter("shadow-ai-radar")
+
+    # metric: a counter of detections, tagged by risk + category
+    detection_counter = meter.create_counter(
+        "ai_tools_detected_total",
+        description="Count of AI tool detections",
+    )
+
+    high_risk = 0
     with tracer.start_as_current_span("scan-cycle") as scan:
         scan.set_attribute("machine_id", MACHINE_ID)
         scan.set_attribute("detections.total", len(detections))
 
-        # one child span per detection
         for d in detections:
+            # span (as before)
             with tracer.start_as_current_span(f"detect:{d['tool']}") as span:
                 span.set_attribute("tool", d["tool"])
                 span.set_attribute("category", d["category"])
@@ -44,7 +84,29 @@ def report_to_signoz(detections, provider):
                 span.set_attribute("detail", d["detail"])
                 span.set_attribute("machine_id", MACHINE_ID)
 
-    provider.shutdown()  # flush everything to SigNoz before exit
+            # metric: increment counter with labels
+            detection_counter.add(1, {
+                "risk": d["risk"],
+                "category": d["category"],
+                "machine_id": MACHINE_ID,
+            })
+
+            # log: one human-readable line per detection
+            log.info(
+                f"[{d['risk'].upper()}] {d['tool']} ({d['category']}) — {d['detail']}",
+                extra={"risk": d["risk"], "category": d["category"], "machine_id": MACHINE_ID},
+            )
+
+            if d["risk"] == "high":
+                high_risk += 1
+
+    # a summary log line — useful for the alert story
+    log.info(f"Scan complete on {MACHINE_ID}: {len(detections)} detections, {high_risk} high-risk")
+
+    # flush all three pipelines before exit
+    tracer_provider.shutdown()
+    logger_provider.shutdown()
+    meter_provider.shutdown() # flush everything to SigNoz before exit
 # Folder to scan (locked in DESIGN_NOTES: ~/DeveloperHub only)
 # Scan scope: this project folder only (tight + safe for testing).
 # Widen to ~/DeveloperHub later if you want realistic detection.
@@ -300,7 +362,7 @@ if __name__ == "__main__":
     print(f"\nDone. {len(found)} detection(s).")
 
     # NEW: also send to SigNoz
-    print("\n📡 Sending detections to SigNoz...")
-    provider = setup_telemetry()
-    report_to_signoz(found, provider)
-    print("Done. Check the Traces section in SigNoz for 'shadow-ai-radar'.")
+    print("\n📡 Sending detections to SigNoz (traces + logs + metrics)...")
+    providers = setup_telemetry()
+    report_to_signoz(found, providers)
+    print("Done. Check Traces, Logs, and Metrics in SigNoz.")
