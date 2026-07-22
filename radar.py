@@ -5,6 +5,84 @@ Privacy: reads only the process list (names). No file contents, no secrets.
 import psutil
 import json
 import os
+import re
+
+# Folder to scan (locked in DESIGN_NOTES: ~/DeveloperHub only)
+# Scan scope: this project folder only (tight + safe for testing).
+# Widen to ~/DeveloperHub later if you want realistic detection.
+KEY_SCAN_ROOT = os.path.expanduser("~/DeveloperHub/shadow-ai-radar")
+
+# Folders we never descend into — noise + risk + slowness
+SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__",
+             ".next", "dist", "build", ".cache"}
+
+# Files worth checking
+ENV_FILENAMES = {".env", ".env.local", ".env.production", ".env.development"}
+
+# Key PATTERNS. We match the shape of a key line — never capture the value.
+# Each pattern is (provider label, compiled regex). The regex checks that a
+# key-like assignment EXISTS on a line; we deliberately do NOT use capture
+# groups to pull the secret out.
+KEY_PATTERNS = [
+    ("OpenAI",    re.compile(r"OPENAI_API_KEY\s*=\s*\S", re.IGNORECASE)),
+    ("OpenAI",    re.compile(r"\bsk-[A-Za-z0-9]{20,}")),          # bare sk- key
+    ("Anthropic", re.compile(r"ANTHROPIC_API_KEY\s*=\s*\S", re.IGNORECASE)),
+    ("Anthropic", re.compile(r"\bsk-ant-\S+")),
+    ("Google",    re.compile(r"(GEMINI|GOOGLE)_API_KEY\s*=\s*\S", re.IGNORECASE)),
+    ("Generic",   re.compile(r"\b\w*(API_KEY|SECRET|TOKEN)\s*=\s*\S", re.IGNORECASE)),
+]
+
+
+def scan_api_keys():
+    """Detect AI/API keys sitting in plaintext .env files under ~/DeveloperHub.
+
+    PRIVACY CONTRACT (enforced below):
+      - reads files line by line only to TEST against patterns
+      - the matched text is never assigned to a stored variable, logged,
+        printed, or transmitted — we record only {provider, file path, present}
+    """
+    detections = []
+
+    if not os.path.isdir(KEY_SCAN_ROOT):
+        return detections  # nothing to scan
+
+    for root, dirs, files in os.walk(KEY_SCAN_ROOT):
+        # prune skip-dirs IN PLACE so os.walk never descends into them
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".git")]
+
+        for filename in files:
+            if filename not in ENV_FILENAMES:
+                continue
+
+            filepath = os.path.join(root, filename)
+            providers_found = set()   # provider LABELS only — never values
+
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if line.lstrip().startswith("#"):
+                            continue  # skip commented-out lines
+                        for provider, pattern in KEY_PATTERNS:
+                            # .search() returns a match object; we check ONLY
+                            # whether it's truthy. We never read .group() — so
+                            # the secret value is never pulled into memory.
+                            if pattern.search(line):
+                                providers_found.add(provider)
+                        # 'line' goes out of scope each iteration; not retained
+            except OSError:
+                continue  # unreadable file — skip safely
+
+            # Emit ONE detection per file, listing which providers were present.
+            if providers_found:
+                # show a privacy-safe relative path, not the full home path
+                rel = os.path.relpath(filepath, os.path.expanduser("~"))
+                detections.append({
+                    "tool": f"API key(s): {', '.join(sorted(providers_found))}",
+                    "category": "api_key",
+                    "risk": "high",
+                    "detail": f"plaintext key in ~/{rel}",
+                })
+    return detections
 # Chrome extensions directory (macOS). "Default" is the main profile.
 CHROME_EXTENSIONS_DIR = os.path.expanduser(
     "~/Library/Application Support/Google/Chrome/Default/Extensions"
@@ -170,7 +248,10 @@ def scan_processes():
 
 if __name__ == "__main__":
     print("🔍 Shadow AI Radar — full scan...\n")
-    found = scan_processes() + scan_mcp_configs() + scan_browser_extensions()  # Layer 1 + Layer 2
+    found = (scan_processes()
+             + scan_mcp_configs()
+             + scan_browser_extensions()
+             + scan_api_keys())
     if not found:
         print("No AI tools detected.")
     else:
