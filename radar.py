@@ -5,6 +5,64 @@ Privacy: reads only the process list (names). No file contents, no secrets.
 import psutil
 import json
 import os
+# Chrome extensions directory (macOS). "Default" is the main profile.
+CHROME_EXTENSIONS_DIR = os.path.expanduser(
+    "~/Library/Application Support/Google/Chrome/Default/Extensions"
+)
+
+# AI-related keywords to match against extension names (case-insensitive).
+AI_EXTENSION_KEYWORDS = [
+    "chatgpt", "gpt", "claude", "copilot", "gemini", "perplexity",
+    "grammarly", "monica", "sider", "merlin", "jasper", "writesonic",
+    "ai ", "ai-", "openai", "anthropic",
+]
+
+
+def scan_browser_extensions():
+    """Detect AI-related Chrome extensions by reading their manifests.
+    Privacy: reads only extension names/metadata from manifest.json."""
+    detections = []
+    seen = set()
+
+    if not os.path.isdir(CHROME_EXTENSIONS_DIR):
+        return detections  # Chrome not installed / no extensions — skip safely
+
+    # Each subfolder is an extension ID; inside are version folders with manifest.json
+    for ext_id in os.listdir(CHROME_EXTENSIONS_DIR):
+        ext_path = os.path.join(CHROME_EXTENSIONS_DIR, ext_id)
+        if not os.path.isdir(ext_path):
+            continue
+
+        # find a manifest.json inside any version subfolder
+        for version in os.listdir(ext_path):
+            manifest = os.path.join(ext_path, version, "manifest.json")
+            if not os.path.exists(manifest):
+                continue
+            try:
+                with open(manifest, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue  # unreadable/broken manifest — skip
+
+            name = str(data.get("name", "")).lower()
+            # Chrome sometimes stores names as "__MSG_appName__" (localized) — skip those
+            if name.startswith("__msg"):
+                continue
+
+            if any(kw in name for kw in AI_EXTENSION_KEYWORDS) and name not in seen:
+                seen.add(name)
+                # broad permission = higher interest
+                perms = data.get("permissions", [])
+                risky = any(p in ["tabs", "<all_urls>", "webRequest", "cookies"]
+                            for p in perms if isinstance(p, str))
+                detections.append({
+                    "tool": data.get("name", "Unknown AI extension"),
+                    "category": "browser_ext",
+                    "risk": "medium" if risky else "low",
+                    "detail": f"Chrome extension" + (" — broad permissions" if risky else ""),
+                })
+            break  # only need one manifest per extension
+    return detections
 
 # MCP config locations from DESIGN_NOTES.md §3 (macOS paths, verified)
 MCP_CONFIG_PATHS = [
@@ -112,7 +170,7 @@ def scan_processes():
 
 if __name__ == "__main__":
     print("🔍 Shadow AI Radar — full scan...\n")
-    found = scan_processes() + scan_mcp_configs()   # Layer 1 + Layer 2
+    found = scan_processes() + scan_mcp_configs() + scan_browser_extensions()  # Layer 1 + Layer 2
     if not found:
         print("No AI tools detected.")
     else:
