@@ -6,6 +6,7 @@ import psutil
 import json
 import os
 import re
+import random
 # --- Telemetry setup (send detections to SigNoz) ---
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -24,7 +25,15 @@ import logging
 
 # One "machine identity" for this scan. Later we can rotate this to simulate
 # multiple employees; for now it's this Mac.
-MACHINE_ID = "harsha-mbp"
+# Simulated employee machines (A5 decision: simulate a fleet from one Mac).
+# Each run picks one, so repeated runs populate the dashboard as a real fleet.
+EMPLOYEE_MACHINES = [
+    "harsha-mbp",
+    "priya-laptop",
+    "dev-machine-03",
+    "intern-macbook",
+]
+MACHINE_ID = random.choice(EMPLOYEE_MACHINES)
 
 def setup_telemetry():
     """Configure traces, logs, and metrics — all shipping to local SigNoz."""
