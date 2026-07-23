@@ -22,7 +22,69 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 import logging
+# --- Console styling (no external libraries needed) ---
+class C:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    GREEN = "\033[92m"
+    CYAN = "\033[96m"
+    GRAY = "\033[90m"
 
+RISK_STYLE = {
+    "high":   (C.RED,    "●"),
+    "medium": (C.YELLOW, "●"),
+    "low":    (C.GREEN,  "●"),
+}
+
+CATEGORY_LABEL = {
+    "chat_app":    "Chat app",
+    "code_agent":  "Code agent",
+    "local_llm":   "Local LLM",
+    "mcp_server":  "MCP server",
+    "browser_ext": "Browser ext",
+    "api_key":     "API key",
+}
+
+def print_report(detections, machine_id):
+    """Pretty, colorized console report of all detections."""
+    print()
+    print(f"{C.CYAN}{C.BOLD}  ╭─────────────────────────────────────────────────────╮{C.RESET}")
+    print(f"{C.CYAN}{C.BOLD}  │            🛰   SHADOW AI RADAR   ·   scan            │{C.RESET}")
+    print(f"{C.CYAN}{C.BOLD}  ╰─────────────────────────────────────────────────────╯{C.RESET}")
+    print(f"  {C.DIM}machine:{C.RESET} {C.BOLD}{machine_id}{C.RESET}")
+    print()
+
+    if not detections:
+        print(f"  {C.GREEN}✓ No AI tools detected.{C.RESET}\n")
+        return
+
+    # sort so HIGH shows first
+    order = {"high": 0, "medium": 1, "low": 2}
+    for d in sorted(detections, key=lambda x: order.get(x["risk"], 3)):
+        color, dot = RISK_STYLE.get(d["risk"], (C.GRAY, "○"))
+        tier = d["risk"].upper()
+        cat = CATEGORY_LABEL.get(d["category"], d["category"])
+        tool = d["tool"] if len(d["tool"]) <= 34 else d["tool"][:31] + "..."
+        print(f"  {color}{dot} {tier:<6}{C.RESET} {C.BOLD}{tool:<36}{C.RESET}"
+              f"{C.DIM}{cat:<12}{C.RESET} {C.GRAY}{d['detail']}{C.RESET}")
+
+    # summary line
+    highs = sum(1 for d in detections if d["risk"] == "high")
+    meds  = sum(1 for d in detections if d["risk"] == "medium")
+    lows  = sum(1 for d in detections if d["risk"] == "low")
+    print()
+    print(f"  {C.DIM}─────────────────────────────────────────────────────{C.RESET}")
+    summary = (f"  {C.BOLD}{len(detections)} detections{C.RESET}   "
+               f"{C.RED}● {highs} high{C.RESET}   "
+               f"{C.YELLOW}● {meds} medium{C.RESET}   "
+               f"{C.GREEN}● {lows} low{C.RESET}")
+    print(summary)
+    if highs:
+        print(f"  {C.RED}{C.BOLD}⚠  {highs} high-risk finding(s) — check the SigNoz dashboard.{C.RESET}")
+    print()
 # One "machine identity" for this scan. Later we can rotate this to simulate
 # multiple employees; for now it's this Mac.
 # Simulated employee machines (A5 decision: simulate a fleet from one Mac).
@@ -33,7 +95,15 @@ EMPLOYEE_MACHINES = [
     "dev-machine-03",
     "intern-macbook",
 ]
-MACHINE_ID = random.choice(EMPLOYEE_MACHINES)
+_counter_file = os.path.join(os.path.dirname(__file__), ".run_counter")
+try:
+    with open(_counter_file) as f:
+        _n = int(f.read().strip())
+except (OSError, ValueError):
+    _n = 0
+MACHINE_ID = EMPLOYEE_MACHINES[_n % len(EMPLOYEE_MACHINES)]
+with open(_counter_file, "w") as f:
+    f.write(str(_n + 1))
 
 def setup_telemetry():
     """Configure traces, logs, and metrics — all shipping to local SigNoz."""
@@ -356,22 +426,15 @@ def scan_processes():
     return detections
 
 if __name__ == "__main__":
-    print("🔍 Shadow AI Radar — full scan...\n")
     found = (scan_processes()
              + scan_mcp_configs()
              + scan_browser_extensions()
              + scan_api_keys())
 
-    # print to console (as before)
-    if not found:
-        print("No AI tools detected.")
-    else:
-        for d in found:
-            print(f"  [{d['risk'].upper():6}] {d['tool']:22} ({d['category']}) — {d['detail']}")
-    print(f"\nDone. {len(found)} detection(s).")
+    print_report(found, MACHINE_ID)
 
-    # NEW: also send to SigNoz
-    print("\n📡 Sending detections to SigNoz (traces + logs + metrics)...")
+    # send to SigNoz (traces + logs + metrics) — unchanged
+    print(f"  📡 Streaming to SigNoz...")
     providers = setup_telemetry()
     report_to_signoz(found, providers)
-    print("Done. Check Traces, Logs, and Metrics in SigNoz.")
+    print(f"  ✓ Sent. View the Shadow AI Radar dashboard at localhost:8080\n")
