@@ -149,13 +149,13 @@ It will flag the file as HIGH — while never printing the key values themselves
 
 <!-- ![Live Slack alert firing](docs/slack-alert.png) -->
 
-![1784835306902](image/README/1784835306902.png)
+![1784835306902](image/README/ConsoleScanOutput.png)
 
 
-![1784835607449](image/README/1784835607449.png)
+![1784835607449](image/README/LiveSlackAlertFiring.png)
 
 
-![1784835689339](image/README/1784835689339.png)
+![1784835689339](image/README/SigNozSecurityDashboard.png)
 
 ---
 
