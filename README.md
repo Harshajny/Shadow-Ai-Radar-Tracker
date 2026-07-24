@@ -151,13 +151,41 @@ It will flag the file as HIGH — while never printing the key values themselves
 
 ![1784835306902](image/README/ConsoleScanOutput.png)
 
-
 ![1784835607449](image/README/LiveSlackAlertFiring.png)
-
 
 ![1784835689339](image/README/SigNozSecurityDashboard.png)
 
 ---
+
+
+
+## Configuration — making it yours
+
+Shadow AI Radar ships configured for a demo on the author's machine. To run it on your own
+setup, edit these values near the top of `radar.py`:
+
+- **Scan folder** (`KEY_SCAN_ROOT`) — the directory scanned for exposed API keys. Point it
+  at a folder you actually keep projects in (e.g. `~/Projects`, `~/Code`). By default it only
+  scans this repo, so out of the box it won't touch the rest of your machine.
+- **Machine identities** (`EMPLOYEE_MACHINES`) — the list used to simulate a fleet. Replace
+  with your own machine name, or a single entry to run it as a real single-machine scan.
+- **Signature lists** — `AI_SIGNATURES` (process names), the MCP config paths, and the AI
+  extension keywords can all be extended to detect more tools.
+  **Run it as a real single-machine scan** (not a simulated fleet): set `EMPLOYEE_MACHINES` to
+  one real hostname and point `KEY_SCAN_ROOT` at your projects directory.
+
+**Platform note:** MCP-config, browser-extension, and process paths are written for **macOS**.
+On Linux/Windows the process layer still works, but the config/extension paths differ and
+would need adjusting.
+
+## Roadmap
+
+This is the detection-and-observability core, built demo-first. Natural next steps:
+
+- A `config.yaml` so scan scope and options live outside the code.
+- A lightweight local UI — enter a path to scan, pick a security/scan depth, view the report.
+- A downloadable agent so it runs across real employee machines, not just a demo fleet.
+- Cross-platform support (Linux/Windows).
 
 ## Note on the demo fleet
 
