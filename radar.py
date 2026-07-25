@@ -102,6 +102,7 @@ try:
 except (OSError, ValueError):
     _n = 0
 MACHINE_ID = EMPLOYEE_MACHINES[_n % len(EMPLOYEE_MACHINES)]
+
 with open(_counter_file, "w") as f:
     f.write(str(_n + 1))
 
